@@ -1093,3 +1093,27 @@ function CS.balance_statespace(sys::NamedStateSpace, args...; kwargs...)
     end
     newsys, T, rest...
 end
+# Compile the naming/wiring once; run still calls stock append and feedback.
+struct PreparedConnection{F,K,T}
+    feedback_system::F
+    indices::K
+    template::T
+end
+function prepare_connect(systems,pairs;external_inputs,external_outputs)
+    full=append(systems...)
+    n=length(pairs)
+    fb=named_ss(ss(Matrix{numeric_type(full)}(I,n,n),full.timeevol))
+    indices=(;U1=Int.(names2indices(last.(pairs),full.u)),Y1=Int.(names2indices(first.(pairs),full.y)),
+        U2=collect(1:n),Y2=collect(1:n),W1=Int.(names2indices(external_inputs,full.u)),
+        Z1=Int.(names2indices(external_outputs,full.y)),W2=Int[],Z2=Int[])
+    template=connect(systems,pairs;external_inputs,external_outputs,verbose=false)
+    PreparedConnection(fb.sys,indices,template)
+end
+function replace_system(template::NamedStateSpace{T},sys::AbstractStateSpace{T}) where T
+    NamedStateSpace{T,typeof(sys)}(sys,template.x[1:nstates(sys)],template.u,template.y,template.name,template.extra)
+end
+function connect(plan::PreparedConnection,systems::Tuple)
+    full=CS.append(map(s->s.sys,systems)...)
+    closed=CS.feedback(full,plan.feedback_system;plan.indices...,pos_feedback=true)
+    replace_system(plan.template,closed)
+end
